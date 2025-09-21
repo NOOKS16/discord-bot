@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Discord Bot Creator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background: #f9fafb; display: flex; justify-content: center; padding: 2rem; }
+    .card { background: #fff; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 600px; width: 100%; }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    label { display: block; margin: 0.5rem 0; }
+    button { background: #2563eb; color: #fff; padding: 0.5rem 1rem; border: none; border-radius: 0.5rem; cursor: pointer; }
+    button:disabled { background: gray; cursor: not-allowed; }
+    .features { display: flex; gap: 1rem; margin: 1rem 0; }
+    .log { margin-top: 1rem; padding: 0.5rem; background: #fef9c3; border: 1px solid #fde047; border-radius: 0.5rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>AI Discord Bot Creator</h1>
+    <p>Enter a bot name and select features. A ready-to-run Discord bot project will be generated and downloaded as a ZIP.</p>
+
+    <label>
+      Bot name:
+      <input id="botName" placeholder="MyBot" style="width:100%; padding:0.5rem; border:1px solid #ccc; border-radius:0.5rem;" />
+    </label>
+
+    <div class="features">
+      <label><input type="checkbox" id="ping" checked /> Ping</label>
+      <label><input type="checkbox" id="moderation" /> Moderation</label>
+      <label><input type="checkbox" id="music" /> Music (stub)</label>
+    </div>
+
+    <button id="generateBtn">Generate Bot</button>
+    <div id="log" class="log" style="display:none;"></div>
+  </div>
+
+<script>
+function buildFiles(botName, features) {
+  const files = {};
+  const safeName = botName.toLowerCase().replace(/\s+/g, "-");
+
+  // package.json
+  files["package.json"] = JSON.stringify({
+    name: safeName,
+    version: "1.0.0",
+    main: "index.js",
+    scripts: { start: "node index.js" },
+    dependencies: { "discord.js": "^14.0.0" }
+  }, null, 2);
+
+  // index.js
+  files["index.js"] = `const { Client, Intents, Collection } = require('discord.js');
+const fs = require('fs');
+const client = new Client({ intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES, Intents.FLAGS.GUILD_MEMBERS] });
+client.commands = new Collection();
+const commandFiles = fs.readdirSync('./commands').filter(f => f.endsWith('.js'));
+for (const file of commandFiles) {
+  const cmd = require(\`./commands/\${file}\`);
+  client.commands.set(cmd.data.name, cmd);
+}
+client.on('ready', () => { console.log(\`Logged in as \${client.user.tag}!\`); });
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isCommand()) return;
+  const cmd = client.commands.get(interaction.commandName);
+  if (!cmd) return;
+  try { await cmd.execute(interaction, client); }
+  catch (err) {
+    console.error(err);
+    await interaction.reply({ content: 'Error executing command.', ephemeral: true });
+  }
+});
+if (!process.env.DISCORD_TOKEN) { console.error('Set DISCORD_TOKEN env var'); process.exit(1); }
+client.login(process.env.DISCORD_TOKEN);`;
+
+  // commands
+  if (features.ping) {
+    files["commands/ping.js"] = `const { SlashCommandBuilder } = require('discord.js');
+module.exports = {
+  data: new SlashCommandBuilder().setName('ping').setDescription('Replies with pong'),
+  async execute(interaction) { await interaction.reply('Pong!'); }
+};`;
+  }
+
+  if (features.moderation) {
+    files["commands/kick.js"] = `const { SlashCommandBuilder } = require('discord.js');
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName('kick')
+    .setDescription('Kick a member')
+    .addUserOption(opt => opt.setName('target').setDescription('Member to kick').setRequired(true))
+    .addStringOption(opt => opt.setName('reason').setDescription('Reason')),
+  async execute(interaction) {
+    const member = interaction.options.getMember('target');
+    const reason = interaction.options.getString('reason') || 'No reason';
+    if (!member.kickable) return interaction.reply({ content: 'I cannot kick this user', ephemeral: true });
+    await member.kick(reason);
+    await interaction.reply(\`Kicked \${member.user.tag} — \${reason}\`);
+  }
+};`;
+  }
+
+  if (features.music) {
+    files["commands/play_stub.js"] = `const { SlashCommandBuilder } = require('discord.js');
+module.exports = {
+  data: new SlashCommandBuilder().setName('play').setDescription('(Stub) Play a track'),
+  async execute(interaction) {
+    await interaction.reply('Music features require extra setup.');
+  }
+};`;
+  }
+
+  // README
+  files["README.md"] = `# Generated Discord Bot
+
+## Quick start
+1. Create a bot at https://discord.com/developers/applications
+2. Add your bot token as an environment variable:
+   - macOS/Linux: export DISCORD_TOKEN=your_token
+   - Windows (PowerShell): $env:DISCORD_TOKEN="your_token"
+3. Run:
+   npm install
+   npm start`;
+
+  return files;
+}
+
+document.getElementById("generateBtn").onclick = async () => {
+  const botName = document.getElementById("botName").value.trim();
+  if (!botName) {
+    alert("Enter a bot name first!");
+    return;
+  }
+
+  const features = {
+    ping: document.getElementById("ping").checked,
+    moderation: document.getElementById("moderation").checked,
+    music: document.getElementById("music").checked
+  };
+
+  const files = buildFiles(botName, features);
+
+  const zip = new JSZip();
+  for (const [path, content] of Object.entries(files)) {
+    zip.file(path, content);
+  }
+
+  const blob = await zip.generateAsync({ type: "blob" });
+  saveAs(blob, `${botName.replace(/\s+/g, "_")}.zip`);
+
+  const log = document.getElementById("log");
+  log.style.display = "block";
+  log.textContent = "✅ Bot generated! ZIP downloaded.";
+};
+</script>
+</body>
+</html>
